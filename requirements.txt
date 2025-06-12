@@ -3,3 +3,4 @@ gradio
 pymongo
 pandas
 python-dotenv
+openai==0.28
