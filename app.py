@@ -281,4 +281,5 @@ with gr.Blocks() as demo:
             outputs=[custom_mermaid_output, csv_table]
         )
 
-demo.launch(share=True)
+import os
+demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 8080)))
