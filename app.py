@@ -2,6 +2,7 @@
 # 📦 Library Imports
 # ========================
 import openai
+from openai import OpenAI
 import gradio as gr
 from pymongo import MongoClient
 from datetime import datetime
@@ -13,32 +14,25 @@ from collections import defaultdict, deque
 from dotenv import load_dotenv
 
 # ========================
-# 🔐 Load secrets from .env file
+# 🔐 Load .env Config
 # ========================
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-mongo_uri = os.getenv("MONGODB_URI")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MONGODB_URI = os.getenv("MONGODB_URI")
 
-print("✅ OpenAI Key loaded:", "✔️" if openai.api_key else "❌ Not Found")
-print("✅ Mongo URI loaded:", "✔️" if mongo_uri else "❌ Not Found")
-
-mongo_client = MongoClient(mongo_uri)
+client_ai = OpenAI(api_key=OPENAI_API_KEY)
+mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["threat_db"]
 attack_tree_collection = db["attack_trees"]
 prompt_library = db["prompt_library"]
 
 EXPORT_DIR = "csv_exports"
 os.makedirs(EXPORT_DIR, exist_ok=True)
-
-# ========================
-# 🔧 Utility Functions
-# ========================
-
 def parse_mermaid_to_named_edges(mermaid_code):
     node_labels = {}
     edges = []
-    lines = mermaid_code.splitlines()
 
+    lines = mermaid_code.splitlines()
     for line in lines:
         node_match = re.findall(r'(\w+)\[(.+?)\]', line)
         for node_id, label in node_match:
@@ -113,8 +107,7 @@ def generate_attack_tree_from_label(label_selected):
     if not label_selected:
         return "❌ Select a threat scenario."
 
-    doc = prompt_library.find_one({"label": label_selected}) or \
-          prompt_library.find_one({"aliases": {"$in": [label_selected.lower()]}})
+    doc = prompt_library.find_one({"label": label_selected}) or prompt_library.find_one({"aliases": {"$in": [label_selected.lower()]}})
     if not doc or "prompt" not in doc:
         return f"❌ No prompt or alias found for '{label_selected}'"
 
@@ -122,19 +115,20 @@ def generate_attack_tree_from_label(label_selected):
     label_to_save = doc["label"]
 
     try:
-        response = openai.ChatCompletion.create(
+        system_message = {
+            "role": "system",
+            "content": "You are a cybersecurity expert. Return only the attack tree in Mermaid format using:\nmermaid\ngraph TD\n..."
+        }
+
+        response = client_ai.chat.completions.create(
             model="gpt-4-turbo",
-            messages=[
-                {"role": "system", "content": "You are a cybersecurity expert. Return only the attack tree in Mermaid format using:\nmermaid\ngraph TD\n..."},
-                {"role": "user", "content": matched_prompt}
-            ],
+            messages=[system_message, {"role": "user", "content": matched_prompt}],
             temperature=0.3,
-            max_tokens=1000
+            max_tokens=900
         )
 
-        mermaid_code = response.choices[0].message['content'].strip()
-        if mermaid_code.startswith("mermaid"):
-            mermaid_code = mermaid_code.replace("mermaid", "").strip()
+        mermaid_code = response.choices[0].message.content.strip()
+        mermaid_code = re.sub(r"^```mermaid|```", "", mermaid_code).strip()
 
         attack_tree_collection.update_one(
             {"label": label_to_save},
@@ -146,23 +140,21 @@ def generate_attack_tree_from_label(label_selected):
             upsert=True
         )
 
-        return f"mermaid\n{mermaid_code}\n"
+        return f"```mermaid\n{mermaid_code}\n```"
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
 # ========================
-# 📌 Tab 2: View Stored Trees
+# 📌 Tab 2: View Stored Trees (Now regenerates if needed)
 # ========================
 
-def load_saved_attack_tree(label):
+def wrapper_load(label):
     if not label:
-        return "❌ No label provided.", pd.DataFrame(), None
+        return "❌ Select a saved attack tree.", pd.DataFrame(), None
 
-    doc = attack_tree_collection.find_one({"label": label})
-    if not doc:
-        alias_doc = prompt_library.find_one({"aliases": {"$in": [label.lower()]}})
-        if alias_doc:
-            doc = attack_tree_collection.find_one({"label": alias_doc["label"]})
+    doc = attack_tree_collection.find_one({"label": label}) or prompt_library.find_one({"aliases": {"$in": [label.lower()]}})
+    if doc and "label" in doc and "mermaid_code" not in doc:
+        return generate_attack_tree_from_label(doc["label"]), pd.DataFrame(), None
 
     if not doc or "mermaid_code" not in doc:
         return "❌ No stored attack tree found.", pd.DataFrame(), None
@@ -176,42 +168,32 @@ def load_saved_attack_tree(label):
     return f"```mermaid\n{mermaid_code}\n```", df, csv_path
 
 # ========================
-# 🆕 Tab 3: Free Prompt Entry
+# 🧾 Tab 3: Free Prompt Entry (Table removed)
 # ========================
 
 def generate_tree_from_free_prompt(prompt):
     if not prompt.strip():
-        return "❌ Please enter a valid prompt", pd.DataFrame()
+        return "❌ Please enter a valid prompt"
 
     try:
-        response = openai.ChatCompletion.create(
+        system_message = {
+            "role": "system",
+            "content": "You are a cybersecurity expert. Respond with only the attack tree in Mermaid format using:\ngraph TD"
+        }
+
+        response = client_ai.chat.completions.create(
             model="gpt-4-turbo",
-            messages=[
-                {"role": "system", "content": "You are a cybersecurity expert. For any input threat scenario, respond with only the attack tree in valid Mermaid syntax using 'graph TD'."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[system_message, {"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=1000
+            max_tokens=900
         )
 
-        mermaid_code = response.choices[0].message['content'].strip()
-        if mermaid_code.startswith("```mermaid"):
-            mermaid_code = mermaid_code.replace("```mermaid", "").replace("```", "").strip()
+        mermaid_code = response.choices[0].message.content.strip()
+        mermaid_code = re.sub(r"^```mermaid|```", "", mermaid_code).strip()
 
-        attack_tree_collection.insert_one({
-            "prompt": prompt,
-            "mermaid_code": mermaid_code,
-            "created_at": datetime.utcnow()
-        })
-
-        edges = parse_mermaid_to_named_edges(mermaid_code)
-        paths = build_ordered_paths(edges)
-        csv_path = export_structured_csv(prompt, paths)
-        df = read_csv_as_dataframe(csv_path)
-
-        return f"```mermaid\n{mermaid_code}\n```", df
+        return f"```mermaid\n{mermaid_code}\n```"
     except Exception as e:
-        return f"❌ Error: {str(e)}", pd.DataFrame()
+        return f"❌ Error: {str(e)}"
 
 # ========================
 # 🎨 Gradio UI with 3 Tabs
@@ -219,7 +201,7 @@ def generate_tree_from_free_prompt(prompt):
 
 with gr.Blocks() as demo:
     with gr.Tab("🧠 Generate Attack Tree"):
-        gr.Markdown("### 🔐 Attack Tree from Predefined Labels")
+        gr.Markdown("### 🔐 attack tree")
 
         label_dropdown = gr.Dropdown(
             choices=sorted([doc["label"] for doc in prompt_library.find({}, {"label": 1, "_id": 0}) if "label" in doc]),
@@ -250,12 +232,6 @@ with gr.Blocks() as demo:
         download_button = gr.File(label="📥 Download CSV")
         regen_button = gr.Button("🔄 Regenerate Tree from Prompt")
 
-        def wrapper_load(label):
-            if not label:
-                return "❌ Select a saved attack tree.", pd.DataFrame(columns=["Surface Goal", "Attack Vector", "Technique", "Method", "Path"]), None
-            mermaid, df, csv_path = load_saved_attack_tree(label)
-            return mermaid, df, csv_path
-
         saved_dropdown.change(
             fn=wrapper_load,
             inputs=saved_dropdown,
@@ -272,14 +248,13 @@ with gr.Blocks() as demo:
         gr.Markdown("🔍 Explore New Threats")
         prompt_input = gr.Textbox(label=" Enter Prompt", lines=5, placeholder="e.g. Add another attack vector to CAN Bus")
         custom_mermaid_output = gr.Markdown(label="📌 Mermaid Diagram")
-        csv_table = gr.Dataframe(headers=["Surface Goal", "Attack Vector", "Technique", "Method", "Path"], datatype=["str"]*5, interactive=False)
         submit_button = gr.Button("Generate")
 
         submit_button.click(
             fn=generate_tree_from_free_prompt,
             inputs=prompt_input,
-            outputs=[custom_mermaid_output, csv_table]
+            outputs=custom_mermaid_output
         )
 
-import os
-demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 8080)))
+if __name__ == "__main__":
+    demo.launch(server_name="0.0.0.0", server_port=8080)
