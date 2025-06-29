@@ -2,7 +2,6 @@
 # 📦 Library Imports
 # ========================
 import openai
-from openai import OpenAI
 import gradio as gr
 from pymongo import MongoClient
 from datetime import datetime
@@ -20,7 +19,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MONGODB_URI = os.getenv("MONGODB_URI")
 
-client_ai = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["threat_db"]
 attack_tree_collection = db["attack_trees"]
@@ -28,6 +27,11 @@ prompt_library = db["prompt_library"]
 
 EXPORT_DIR = "csv_exports"
 os.makedirs(EXPORT_DIR, exist_ok=True)
+
+# ========================
+# 🔧 Utility Functions
+# ========================
+
 def parse_mermaid_to_named_edges(mermaid_code):
     node_labels = {}
     edges = []
@@ -120,7 +124,7 @@ def generate_attack_tree_from_label(label_selected):
             "content": "You are a cybersecurity expert. Return only the attack tree in Mermaid format using:\nmermaid\ngraph TD\n..."
         }
 
-        response = client_ai.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4-turbo",
             messages=[system_message, {"role": "user", "content": matched_prompt}],
             temperature=0.3,
@@ -145,7 +149,7 @@ def generate_attack_tree_from_label(label_selected):
         return f"❌ Error: {str(e)}"
 
 # ========================
-# 📌 Tab 2: View Stored Trees (Now regenerates if needed)
+# 📌 Tab 2: View Stored Trees
 # ========================
 
 def wrapper_load(label):
@@ -168,7 +172,7 @@ def wrapper_load(label):
     return f"```mermaid\n{mermaid_code}\n```", df, csv_path
 
 # ========================
-# 🧾 Tab 3: Free Prompt Entry (Table removed)
+# 🧾 Tab 3: Free Prompt Entry
 # ========================
 
 def generate_tree_from_free_prompt(prompt):
@@ -181,7 +185,7 @@ def generate_tree_from_free_prompt(prompt):
             "content": "You are a cybersecurity expert. Respond with only the attack tree in Mermaid format using:\ngraph TD"
         }
 
-        response = client_ai.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4-turbo",
             messages=[system_message, {"role": "user", "content": prompt}],
             temperature=0.3,
@@ -201,7 +205,7 @@ def generate_tree_from_free_prompt(prompt):
 
 with gr.Blocks() as demo:
     with gr.Tab("🧠 Generate Attack Tree"):
-        gr.Markdown("### 🔐 attack tree")
+        gr.Markdown("### 🔐 Generate Attack Tree from Prompt Library")
 
         label_dropdown = gr.Dropdown(
             choices=sorted([doc["label"] for doc in prompt_library.find({}, {"label": 1, "_id": 0}) if "label" in doc]),
