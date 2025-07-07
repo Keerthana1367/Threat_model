@@ -121,7 +121,7 @@ def generate_attack_tree_from_label(label_selected):
     try:
         system_message = {
             "role": "system",
-            "content": "You are a cybersecurity expert. Return only the attack tree in Mermaid format using:\nmermaid\ngraph TD\n..."
+            "content": "You are a cybersecurity expert. Return only the attack tree in Mermaid format using:\ngraph TD"
         }
 
         response = openai.ChatCompletion.create(
@@ -149,7 +149,7 @@ def generate_attack_tree_from_label(label_selected):
         return f"❌ Error: {str(e)}"
 
 # ========================
-# 📌 Tab 2: View Stored Trees
+# 📜 Tab 2: View Stored Trees
 # ========================
 
 def wrapper_load(label):
@@ -172,7 +172,7 @@ def wrapper_load(label):
     return f"```mermaid\n{mermaid_code}\n```", df, csv_path
 
 # ========================
-# 🧾 Tab 3: Free Prompt Entry
+# 🗓 Tab 3: Free Prompt
 # ========================
 
 def generate_tree_from_free_prompt(prompt):
@@ -180,27 +180,53 @@ def generate_tree_from_free_prompt(prompt):
         return "❌ Please enter a valid prompt"
 
     try:
-        system_message = {
-            "role": "system",
-            "content": "You are a cybersecurity expert. Respond with only the attack tree in Mermaid format using:\ngraph TD"
-        }
+        label_input = prompt.strip().lower()
+        words = re.findall(r'\b\w+\b', label_input)
+        label_to_save = "_".join(words[-3:]) if words else "custom_label"
+        aliases = list(set([label_to_save] + words + [label_input.replace(" ", "_")]))
 
-        response = openai.ChatCompletion.create(
+        tree_resp = openai.ChatCompletion.create(
             model="gpt-4-turbo",
-            messages=[system_message, {"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "Generate a full attack tree for the following prompt in Mermaid format starting with:\n```mermaid\ngraph TD"},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.3,
-            max_tokens=900
+            max_tokens=1500
+        )
+        raw_tree = tree_resp.choices[0].message.content.strip()
+        match = re.search(r"```mermaid\s*(graph TD[\s\S]*?)```", raw_tree)
+        if not match:
+            return "❌ Mermaid diagram not found or invalid format."
+        mermaid_code = match.group(1).strip()
+
+        prompt_library.update_one(
+            {"label": label_to_save},
+            {"$set": {
+                "label": label_to_save,
+                "aliases": aliases,
+                "prompt": prompt,
+                "updated_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
+        attack_tree_collection.update_one(
+            {"label": label_to_save},
+            {"$set": {
+                "prompt": prompt,
+                "mermaid_code": mermaid_code,
+                "updated_at": datetime.utcnow()
+            }},
+            upsert=True
         )
 
-        mermaid_code = response.choices[0].message.content.strip()
-        mermaid_code = re.sub(r"^```mermaid|```", "", mermaid_code).strip()
+        return f"✅ Tree saved as **'{label_to_save}'**. You can now find it in Tab 1.\n\n```mermaid\n{mermaid_code}\n```"
 
-        return f"```mermaid\n{mermaid_code}\n```"
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
 # ========================
-# 🎨 Gradio UI with 3 Tabs
+# 🎨 Gradio UI
 # ========================
 
 with gr.Blocks() as demo:
@@ -223,7 +249,7 @@ with gr.Blocks() as demo:
         )
 
     with gr.Tab("📂 Library"):
-        gr.Markdown("### 📉 View and Export Structured Threat Trees")
+        gr.Markdown("### 🖉 View and Export Structured Threat Trees")
 
         saved_dropdown = gr.Dropdown(
             choices=sorted(set([doc["label"] for doc in attack_tree_collection.find({}, {"label": 1, "_id": 0}) if "label" in doc])),
@@ -233,7 +259,7 @@ with gr.Blocks() as demo:
         )
         mermaid_output = gr.Markdown(label="📈 Saved Attack Tree")
         relation_table = gr.Dataframe(headers=["Surface Goal", "Attack Vector", "Technique", "Method", "Path"], datatype=["str"]*5, interactive=False)
-        download_button = gr.File(label="📥 Download CSV")
+        download_button = gr.File(label="📅 Download CSV")
         regen_button = gr.Button("🔄 Regenerate Tree from Prompt")
 
         saved_dropdown.change(
@@ -248,7 +274,7 @@ with gr.Blocks() as demo:
             outputs=mermaid_output
         )
 
-    with gr.Tab("🧾 Custom Prompt"):
+    with gr.Tab("🗓 Custom Prompt"):
         gr.Markdown("🔍 Explore New Threats")
         prompt_input = gr.Textbox(label=" Enter Prompt", lines=5, placeholder="e.g. Add another attack vector to CAN Bus")
         custom_mermaid_output = gr.Markdown(label="📌 Mermaid Diagram")
