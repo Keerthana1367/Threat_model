@@ -2,7 +2,6 @@
 # 📦 Library Imports
 # ========================
 import openai
-from openai import OpenAI
 import gradio as gr
 from pymongo import MongoClient
 from datetime import datetime
@@ -14,13 +13,15 @@ from collections import defaultdict, deque
 from dotenv import load_dotenv
 
 # ========================
-# 🔐 Load .env Variables
+# 🔐 Load .env Variables (optional for local testing)
 # ========================
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MONGODB_URI = os.getenv("MONGODB_URI")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+MONGODB_URI = os.getenv("MONGODB_URI", "")
 
-client_ai = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
+client_ai = openai
+
 mongo_client = MongoClient(MONGODB_URI)
 db = mongo_client["threat_db"]
 attack_tree_collection = db["attack_trees"]
