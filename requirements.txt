@@ -1,6 +1,5 @@
-openai
-gradio
+gradio>=4.0
+openai>=1.3.0
 pymongo
 pandas
 python-dotenv
-openai==0.28
